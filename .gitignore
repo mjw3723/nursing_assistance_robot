@@ -1,0 +1,31 @@
+# ❌ 빌드 및 설치 디렉토리
+build/
+install/
+log/
+
+# ❌ 파이썬 캐시 파일
+__pycache__/
+*.py[cod]
+*.so
+
+# ❌ 에디터 관련 임시파일
+*.swp
+*.swo
+*.bak
+*~
+
+# ❌ VSCode / IDE 세팅 파일
+.vscode/
+.idea/
+
+# ❌ 테스트 결과 파일
+test/__pycache__/
+test/*.log
+
+# ❌ ROS2 런타임 자동 생성 파일
+*.launch.pyc
+*.yamlc
+
+# ❌ 기타
+.env
+*.egg-info/
