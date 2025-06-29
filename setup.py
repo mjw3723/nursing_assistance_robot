@@ -21,7 +21,11 @@ setup(
     entry_points={
         'console_scripts': [
             'nav_node = nursing_assistance_robot.nav_node:main',
-            'yolo_detect_depth = nursing_assistance_robot.yolo_detect_depth:main'
+            'yolo_detect_depth = nursing_assistance_robot.yolo_detect_depth:main',
+            'request_node = nursing_assistance_robot.request_node:main',
+            'response_node = nursing_assistance_robot.response_node:main',
+            'yolo_detect_node = nursing_assistance_robot.yolo_detect_node:main',
+            'depth_node = nursing_assistance_robot.depth_node:main',
         ],
     },
 )

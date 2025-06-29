@@ -10,6 +10,8 @@ import tf2_ros
 import tf2_geometry_msgs 
 from visualization_msgs.msg import Marker
 from std_msgs.msg import Bool 
+from std_msgs.msg import Float64
+from geometry_msgs.msg import Point
 from rclpy.qos import QoSProfile, ReliabilityPolicy, DurabilityPolicy
 # import logging
 # logging.getLogger("ultralytics").setLevel(logging.ERROR)
@@ -21,11 +23,6 @@ class YoloSubscriber(Node):
         super().__init__('yolo_subscriber')
         self.bridge = CvBridge()
         self.model = YOLO('/home/moon/turtlebot4_ws/src/yolov8_ros/yolov8_ros/best.pt',verbose=False)
-        self.subscription = self.create_subscription(
-            Image,
-            DEPTH_TOPIC,
-            self.depth_callback,
-            1)
         qos_profile = QoSProfile(
             reliability=ReliabilityPolicy.RELIABLE,
             durability=DurabilityPolicy.TRANSIENT_LOCAL,
@@ -36,6 +33,17 @@ class YoloSubscriber(Node):
             '/robot1/oakd/rgb/preview/image_raw',
             self.listener_callback,
             1)
+        self.distance_subscription = self.create_subscription(
+            Float64,
+            '/distance',
+            self.distance_callback,
+            1
+        )
+        self.point_publisher = self.create_publisher(
+            Point,
+            '/depth_point',
+            1
+        )
         self.tf_buffer = tf2_ros.Buffer()
         self.tf_listener = tf2_ros.TransformListener(self.tf_buffer, self)
         self.marker_pub = self.create_publisher(Marker, '/robot1/yolo_marker', 10)
@@ -46,65 +54,47 @@ class YoloSubscriber(Node):
         self.cleared_pub = self.create_publisher(Bool, '/person_cleared', qos_profile)
         self.no_person_frame_count = 0
         self.no_person_frame_threshold = 5 
+        self.distance_m = None
 
     def listener_callback(self, msg):
-        try:
-            person_detected_now = False
-            # ROS 이미지 → OpenCV 이미지
-            cv_image = self.bridge.imgmsg_to_cv2(msg, desired_encoding='bgr8')
-            # YOLO 추론
-            results = self.model(cv_image, imgsz=320, conf=0.7)[0]
-            annotated_frame = results.plot()  # 결과 시각화
-            if results.boxes is not None and results.boxes.xyxy is not None:
-                for box, cls_id in zip(results.boxes.xyxy.cpu().numpy(), results.boxes.cls.cpu().numpy()):
-                    class_name = self.model.names[int(cls_id)]
-                    if class_name != 'wheelchair' and class_name != 'patient':
-                        continue
-                    self.get_logger().info(f"class Name = ===== {class_name}")
-                    x1, y1, x2, y2 = box[:4]
-                    self.cx = int((x1 + x2) / 2)
-                    self.cy = int((y1 + y2) / 2)
-                    if self.depth_image is not None :
-                        if 0 <= self.cy < self.depth_image.shape[0] and 0 <= self.cx < self.depth_image.shape[1]:
-                            distance_mm = self.depth_image[self.cy, self.cx]
-                            distance_m = distance_mm / 1000.0
-                            if class_name != 'wheelchair' and class_name != 'patient':
-                                continue
-                            if distance_m <= 5.0:
-                                person_detected_now = True
-                                if not self.person_published:
-                                    self.publish_person_detect()
-                            else:
-                                person_detected_now = False
-                            #self.get_logger().info(f"(x={self.cx}, y={self.cy}) → 거리: {distance_m:.2f} m")
-                            point_base = self.point_transform(distance_m)
-                            # if point_base:
-                            #     self.publish_marker(point_base)
-                            # text = f'{distance_m:.2f} m'
-                            # cv2.circle(annotated_frame, (self.cx, self.cy), 5, (0, 255, 255), -1)
-                            # cv2.putText(annotated_frame, text, (self.cx + 5, self.cy - 5),
-                            #             cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 0), 2)
-            if self.depth_image is not None :
-                if person_detected_now:
-                    self.no_person_frame_count = 0  # 감지됐으면 초기화
-                else:
-                    if self.person_published:  # 사람이 이전에 감지된 상태일 때만 체크
-                        self.no_person_frame_count += 1
-                        if self.no_person_frame_count >= self.no_person_frame_threshold:
-                            if not self.person_cleared_published:
-                                self.publish_person_cleared()
-                                self.person_cleared_published = True
-                            self.no_person_frame_count = 0  # 초기화
-        except AttributeError:
-            pass
-            cv2.imshow("YOLOv8 Detection", annotated_frame)
-            cv2.waitKey(1)
+        person_detected_now = False
+        # ROS 이미지 → OpenCV 이미지
+        cv_image = self.bridge.imgmsg_to_cv2(msg, desired_encoding='bgr8')
+        # YOLO 추론
+        results = self.model(cv_image, imgsz=320, conf=0.7)[0]
+        annotated_frame = results.plot()  # 결과 시각화
+        if results.boxes is not None and results.boxes.xyxy is not None:
+            for box, cls_id in zip(results.boxes.xyxy.cpu().numpy(), results.boxes.cls.cpu().numpy()):
+                class_name = self.model.names[int(cls_id)]
+                if class_name != 'wheelchair' and class_name != 'patient':
+                    continue
+                self.get_logger().info(f"class Name = ===== {class_name}")
+                x1, y1, x2, y2 = box[:4]
+                cx = int((x1 + x2) / 2)
+                cy = int((y1 + y2) / 2)
+                self.publish_point(cx,cy)
+                if self.distance_m is not None:
+                    if self.distance_m <= 5.0:
+                        person_detected_now = True
+                        if not self.person_published:
+                            self.publish_person_detect()
+                    else:
+                        person_detected_now = False
+        if person_detected_now:
+            self.no_person_frame_count = 0  # 감지됐으면 초기화
+        else:
+            if self.person_published:  # 사람이 이전에 감지된 상태일 때만 체크
+                self.no_person_frame_count += 1
+                if self.no_person_frame_count >= self.no_person_frame_threshold:
+                    if not self.person_cleared_published:
+                        self.publish_person_cleared()
+                        self.person_cleared_published = True
+                    self.no_person_frame_count = 0  # 초기화
+        cv2.imshow("YOLOv8 Detection", annotated_frame)
+        cv2.waitKey(1)
 
-    def depth_callback(self, msg):
-        try:
-            self.depth_image = self.bridge.imgmsg_to_cv2(msg, desired_encoding='passthrough')
-        except AttributeError:
-            pass
+    def distance_callback(self,msg:Float64):
+        self.distance_m = msg.data
 
     def publish_person_detect(self):
         msg = Bool()
@@ -142,7 +132,14 @@ class YoloSubscriber(Node):
         marker.color.a = 1.0
         marker.lifetime.sec = 2  # 2초간 유지
         self.marker_pub.publish(marker)
-    
+
+    def publish_point(self,cx:int,cy:int):
+        point_msg = Point()
+        point_msg.x = float(cx)
+        point_msg.y = float(cy)
+        point_msg.z = 0.0
+        self.point_publisher.publish(point_msg)
+
     def point_transform(self,distance:float):
         point_base = PointStamped()
         point_base.header.stamp = rclpy.time.Time().to_msg()
@@ -161,6 +158,7 @@ class YoloSubscriber(Node):
         else:
             self.get_logger().warn('Transform from base_link to map is not available yet.')
             return None
+    
         
 def main(args=None):
     rclpy.init(args=args)

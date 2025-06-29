@@ -20,16 +20,19 @@ class PatrolNavigator(Node):
         self.create_subscription(Bool, '/person_cleared', self.clear_callback, 10)
         self.waypoints = []
         self.current_index = 0
+
     def person_callback(self, msg):
         if msg.data and not self.person_detected:
             self.get_logger().info('사람 감지됨! 주행 중단')
             self.person_detected = True
             self.nav_navigator.cancelTask()
+
     def clear_callback(self, msg):
         if msg.data and self.person_detected:
             self.get_logger().info('사람 사라짐! 주행 재개 예정')
             self.person_detected = False
             self.should_resume = True
+
     def create_pose(self, x, y, yaw_deg):
         pose = PoseStamped()
         pose.header.frame_id = 'map'
@@ -54,8 +57,8 @@ class PatrolNavigator(Node):
             self.dock_navigator.undock()
         self.waypoints = [
             self.create_pose(4.09, 0.89, 0.0),
-            self.create_pose(1.06, 0.75, 180.0),
-            self.create_pose(-0.01, -0.01, 0.0)
+            self.create_pose(1.06, 0.75, -90.0),
+            self.create_pose(0.05, 0.05, 180.0)
         ]
         while self.current_index < len(self.waypoints):
             self.get_logger().info(f'{self.current_index + 1}번째 경로 이동 중...')
@@ -79,11 +82,18 @@ class PatrolNavigator(Node):
                 rclpy.spin_once(self, timeout_sec=0.5)
         self.dock_navigator.dock()
         self.get_logger().info('도킹 요청 완료')
+        
 def main():
     rclpy.init()
-    node = PatrolNavigator()
-    node.run()
-    node.destroy_node()
-    rclpy.shutdown()
+    node = None
+    try:
+        node = PatrolNavigator()
+        node.run()
+    except KeyboardInterrupt:
+        print("KeyboardInterrupt 발생 – 노드 종료합니다.")
+    finally:
+        if node is not None:
+            node.destroy_node()
+        rclpy.shutdown()
 if __name__ == '__main__':
     main()
