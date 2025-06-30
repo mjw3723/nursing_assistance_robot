@@ -26,6 +26,8 @@ setup(
             'response_node = nursing_assistance_robot.response_node:main',
             'yolo_detect_node = nursing_assistance_robot.yolo_detect_node:main',
             'depth_node = nursing_assistance_robot.depth_node:main',
+            'fake_node = nursing_assistance_robot.fake_node:main',
+            'music_node = nursing_assistance_robot.music_node:main',
         ],
     },
 )

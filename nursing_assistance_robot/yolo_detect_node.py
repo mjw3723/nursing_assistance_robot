@@ -5,19 +5,20 @@ from geometry_msgs.msg import PointStamped
 from cv_bridge import CvBridge
 import cv2
 from ultralytics import YOLO
-import time
 import tf2_ros
-import tf2_geometry_msgs 
+import numpy as np # ArUco 포즈 추정에 필요
 from visualization_msgs.msg import Marker
 from std_msgs.msg import Bool 
 from std_msgs.msg import Float64
 from geometry_msgs.msg import Point
 from rclpy.qos import QoSProfile, ReliabilityPolicy, DurabilityPolicy
-# import logging
-# logging.getLogger("ultralytics").setLevel(logging.ERROR)
-DEPTH_TOPIC = '/robot1/oakd/stereo/image_raw'  # Depth 이미지 토픽
-MAX_DEPTH_METERS = 5.0                 # 시각화 시 최대 깊이 값 (m)
-NORMALIZE_DEPTH_RANGE = 3.0     
+import pickle
+import os
+from rokey_interfaces.msg import Aruco_Marker
+
+RGB_TOPIC = '/robot1/oakd/rgb/preview/image_raw' # RGB 이미지 토픽
+CALIBRATION_FILE_PATH = 'camera_calibration.pkl' # 캘리브레이션 데이터 파일 경로
+MARKER_SIZE = 0.05  # ArUco 마커 크기 (미터 단위, 예: 5cm) - 실제 마커 크기와 정확히 일치해야 합니다!
 class YoloSubscriber(Node):
     def __init__(self):
         super().__init__('yolo_subscriber')
@@ -30,7 +31,7 @@ class YoloSubscriber(Node):
         )
         self.rgb_subscription = self.create_subscription(
             Image,
-            '/robot1/oakd/rgb/preview/image_raw',
+            RGB_TOPIC,
             self.listener_callback,
             1)
         self.distance_subscription = self.create_subscription(
@@ -46,20 +47,51 @@ class YoloSubscriber(Node):
         )
         self.tf_buffer = tf2_ros.Buffer()
         self.tf_listener = tf2_ros.TransformListener(self.tf_buffer, self)
-        self.marker_pub = self.create_publisher(Marker, '/robot1/yolo_marker', 10)
-        self.marker_id = 0
         self.person_published = False
         self.person_cleared_published = False
         self.person_pub = self.create_publisher(Bool, '/person_detected', qos_profile)
         self.cleared_pub = self.create_publisher(Bool, '/person_cleared', qos_profile)
+        self.marker_pub = self.create_publisher(Aruco_Marker, '/aruco_marker', 10)
         self.no_person_frame_count = 0
         self.no_person_frame_threshold = 5 
         self.distance_m = None
+        
+    def init_aruco(self):
+        # Aruco
+        self.camera_matrix = None
+        self.dist_coeffs = None
+        try:
+            script_dir = os.path.dirname(os.path.abspath(__file__))
+            full_calibration_path = os.path.join(script_dir, CALIBRATION_FILE_PATH)
+            with open(full_calibration_path, 'rb') as f:
+                calibration_data = pickle.load(f)
+            self.camera_matrix = calibration_data['camera_matrix']
+            self.dist_coeffs = calibration_data['dist_coeffs']
+            self.get_logger().info("ArUco: Calibration data loaded successfully.")
+        except FileNotFoundError:
+            self.get_logger().error(f"ArUco: Error: Camera calibration file not found at {full_calibration_path}")
+            self.get_logger().error("ArUco: Please ensure 'camera_calibration.pkl' exists in the same directory as this script, or provide the full path.")
+        except Exception as e:
+            self.get_logger().error(f"ArUco: Error loading calibration data: {e}")  
+        self.aruco_dict = cv2.aruco.getPredefinedDictionary(cv2.aruco.DICT_5X5_250)
+        self.aruco_params = cv2.aruco.DetectorParameters() 
+        self.detector = cv2.aruco.ArucoDetector(self.aruco_dict, self.aruco_params)
+        self.get_logger().info("ArUco: Detector initialized with DICT_5X5_250.")
 
+        half_size = MARKER_SIZE / 2.0
+        self.obj_points = np.array([
+            [-half_size,  half_size, 0],  # Top-left
+            [ half_size,  half_size, 0],  # Top-right
+            [ half_size, -half_size, 0],  # Bottom-right
+            [-half_size, -half_size, 0]   # Bottom-left
+        ], dtype=np.float32)
+
+    
     def listener_callback(self, msg):
         person_detected_now = False
         # ROS 이미지 → OpenCV 이미지
         cv_image = self.bridge.imgmsg_to_cv2(msg, desired_encoding='bgr8')
+        self.frame_processed = cv_image.copy()
         # YOLO 추론
         results = self.model(cv_image, imgsz=320, conf=0.7)[0]
         annotated_frame = results.plot()  # 결과 시각화
@@ -74,12 +106,13 @@ class YoloSubscriber(Node):
                 cy = int((y1 + y2) / 2)
                 self.publish_point(cx,cy)
                 if self.distance_m is not None:
-                    if self.distance_m <= 5.0:
+                    if self.distance_m <= 3.0:
                         person_detected_now = True
                         if not self.person_published:
                             self.publish_person_detect()
                     else:
                         person_detected_now = False
+        self.aruco_run()
         if person_detected_now:
             self.no_person_frame_count = 0  # 감지됐으면 초기화
         else:
@@ -92,6 +125,35 @@ class YoloSubscriber(Node):
                     self.no_person_frame_count = 0  # 초기화
         cv2.imshow("YOLOv8 Detection", annotated_frame)
         cv2.waitKey(1)
+    
+    def aruco_run(self):
+        if self.frame_processed is not None:
+            frame_undistorted = cv2.undistort(self.frame_processed, self.camera_matrix, self.dist_coeffs)
+            corners, ids, _ = self.detector.detectMarkers(frame_undistorted)
+            if ids is not None:
+                for i in range(len(ids)):
+                    ret, rvec, tvec = cv2.solvePnP(
+                        self.obj_points, corners[i],
+                        self.camera_matrix, self.dist_coeffs
+                    )
+                    if not ret:
+                        continue
+                    # 회전 벡터 → 오일러 변환
+                    rot_matrix, _ = cv2.Rodrigues(rvec)
+                    try:
+                        euler_angles = cv2.RQDecomp3x3(rot_matrix)[0]
+                    except cv2.error:
+                        self.get_logger().warn(f"ArUco: Rotation 실패 - ID {ids[i][0]}")
+                        continue
+                    marker_msg = Aruco_Marker()
+                    marker_msg.id = int(ids[i][0])
+                    marker_msg.pos_x = float(tvec[0])
+                    marker_msg.pos_y = float(tvec[1])
+                    marker_msg.pos_z = float(tvec[2])
+                    marker_msg.rot_x = float(euler_angles[0])
+                    marker_msg.rot_y = float(euler_angles[1])
+                    marker_msg.rot_z = float(euler_angles[2])
+                    self.marker_pub.publish(marker_msg)
 
     def distance_callback(self,msg:Float64):
         self.distance_m = msg.data
@@ -109,29 +171,6 @@ class YoloSubscriber(Node):
         msg.data = True
         self.cleared_pub.publish(msg)
         self.get_logger().info('⚠️ /person_cleared → True 발행')
-
-    def publish_marker(self,point_map:PointStamped):
-        marker = Marker()
-        marker.header.frame_id = 'map'
-        marker.header.stamp = self.get_clock().now().to_msg()
-        marker.ns = 'yolo'
-        marker.id = self.marker_id
-        self.marker_id += 1
-        marker.type = Marker.SPHERE
-        marker.action = Marker.ADD
-        marker.pose.position.x = point_map.point.x
-        marker.pose.position.y = point_map.point.y
-        marker.pose.position.z = 0.1
-        marker.pose.orientation.w = 1.0
-        marker.scale.x = 0.2
-        marker.scale.y = 0.2
-        marker.scale.z = 0.2
-        marker.color.r = 1.0
-        marker.color.g = 1.0
-        marker.color.b = 0.0
-        marker.color.a = 1.0
-        marker.lifetime.sec = 2  # 2초간 유지
-        self.marker_pub.publish(marker)
 
     def publish_point(self,cx:int,cy:int):
         point_msg = Point()
