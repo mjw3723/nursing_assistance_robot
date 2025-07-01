@@ -8,8 +8,8 @@ from builtin_interfaces.msg import Duration
 class AudioTestNode(Node):
     def __init__(self):
         super().__init__('audio_test_node')
-        self.audio_publisher = self.create_publisher(AudioNoteVector, '/robot1/cmd_audio', 10)
-
+        self.robot1_audio_publisher = self.create_publisher(AudioNoteVector, '/robot1/cmd_audio', 10)
+        self.robot4_audio_publisher = self.create_publisher(AudioNoteVector, '/robot4/cmd_audio', 10)
         # 입력 대기 스레드 시작
         threading.Thread(target=self.input_thread, daemon=True).start()
 
@@ -109,7 +109,8 @@ class AudioTestNode(Node):
             note.frequency = int(freq)
             note.max_runtime = Duration(sec=0, nanosec=int(sec * 1e9))
             audio_vector_msg.notes.append(note)
-        self.audio_publisher.publish(audio_vector_msg)
+        self.robot1_audio_publisher.publish(audio_vector_msg)
+        self.robot4_audio_publisher.publish(audio_vector_msg)
         rclpy.spin_once(self, timeout_sec=2.0)
 
 

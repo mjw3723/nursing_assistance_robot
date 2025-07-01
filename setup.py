@@ -28,6 +28,8 @@ setup(
             'depth_node = nursing_assistance_robot.depth_node:main',
             'fake_node = nursing_assistance_robot.fake_node:main',
             'music_node = nursing_assistance_robot.music_node:main',
+            'main_controller = nursing_assistance_robot.main_controller:main',
+            'fake_patrol_node = nursing_assistance_robot.fake_patrol_node:main',
         ],
     },
 )

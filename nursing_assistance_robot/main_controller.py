@@ -5,9 +5,9 @@ import threading
 import rclpy
 from rclpy.node import Node
 from PyQt5.QtCore import QThread
-from PyQt5.QtWidgets import QApplication, QWidget, QLabel, QPushButton, QVBoxLayout, QTextEdit
+from PyQt5.QtWidgets import QApplication, QWidget, QLabel, QPushButton, QVBoxLayout, QTextEdit,QLineEdit
 
-from rokey_interfaces.srv import AssignPatient, NotifyArrival, GoToRoom
+from rokey_interfaces.srv import AssignPatient, NotifyArrival, GoToRoom, Firstcmd, EndFlag
 
 
 class PatrolControlNode(Node):
@@ -16,7 +16,7 @@ class PatrolControlNode(Node):
         super().__init__('patrol_control_node',namespace=namespace)
 
         ############ROBOT1##########################
-        self.assign_patient_client = self.create_client(AssignPatient, '/assign_patient')
+        self.assign_patient_client = self.create_client(AssignPatient, 'assign_patient')
         self.notify_arrival_service = self.create_service(
             NotifyArrival,
             'notify_arrival',
@@ -25,7 +25,12 @@ class PatrolControlNode(Node):
         self.go_to_room_client = self.create_service(GoToRoom, 'go_to_room',self.handle_go_to_room)
 
         ############ROBOT4##########################
-
+        # robot4 배송 물품 요청 서비스 클라이언트 생성
+        self.robot4_object_client = self.create_client(Firstcmd, '/object_name')
+        # robot4 rendezvous 도착 여부 서비스 서버 생성
+        self.srv = self.create_service(EndFlag, '/robot4_rendezvous', self.handle_robot4_rendezvous)
+        # robot4 랑데부 포인트 만남 서비스 클라이언트 생성
+        self.robot4_meet_client = self.create_client(EndFlag, '/robot4_meet')
         self.gui_log_callback = None  # GUI 로그 출력을 위한 콜백
 
     def register_gui_logger(self, log_func):
@@ -77,7 +82,7 @@ class PatrolControlNode(Node):
         self.get_logger().info(log_msg)
         if self.gui_log_callback:
             self.gui_log_callback(log_msg)
-            self.gui_log_callback('✅ 도착 통보 응답: accepted=True')
+            self.gui_log_callback('✅ 도착 통보 응답: permission=True')
 
         response.accepted = True
         return response
@@ -87,7 +92,24 @@ class PatrolControlNode(Node):
         req.permission = permission
         res = GoToRoom.Response()
         return self.handle_go_to_room(req, res)
+    
+
+    #################ROBOT4########################
+    def handle_robot4_rendezvous(self,request,response):
+        data = request.data
+        log_msg = f'🚑 [data] 도착 통보 요청 수신 (data={data})'
+        self.get_logger().info(log_msg)
+        if self.gui_log_callback:
+            self.gui_log_callback(log_msg)
+            self.gui_log_callback('✅ 도착 통보 응답: data=True')
+        response.success = True
+        return response
         
+    def simulate_robot4_rendezvous(self, data):
+        req = EndFlag.Request()
+        req.data = data
+        res = EndFlag.Response()
+        return self.handle_robot4_rendezvous(req,res)
 
 
 class PatrolControlGUI(QWidget):
@@ -97,7 +119,7 @@ class PatrolControlGUI(QWidget):
         self.ros_node.register_gui_logger(self.log)
 
         self.setWindowTitle('순찰 로봇 제어 GUI')
-        self.setGeometry(100, 100, 400, 400)
+        self.setGeometry(100, 100, 600, 800)
 
         self.log_box = QTextEdit(self)
         self.log_box.setReadOnly(True)
@@ -105,20 +127,32 @@ class PatrolControlGUI(QWidget):
         self.btn_assign_patient = QPushButton('환자 배정 (AssignPatient)', self)
         self.btn_notify_arrival = QPushButton('도착 통보 (NotifyArrival)', self)
         self.btn_go_to_room = QPushButton('병실 이동 허가 (GoToRoom)', self)
+        self.btn_robot4_object = QPushButton('배송 물품 요청 (object)', self)
+        self.btn_robot4_rendezvous = QPushButton('랑데부 포인트 (rendezvous)', self)
+        self.btn_robot4_meet = QPushButton('로봇 만남 완료(meet)', self)
         self.btn_exit = QPushButton('종료', self)
-
+        self.object_line_edit = QLineEdit('',self)
         layout = QVBoxLayout()
         layout.addWidget(QLabel('🧠 순찰 로봇 서비스 제어'))
         layout.addWidget(self.btn_assign_patient)
         layout.addWidget(self.btn_notify_arrival)
         layout.addWidget(self.btn_go_to_room)
+        layout.addWidget(self.btn_robot4_object)
+        layout.addWidget(self.object_line_edit)
+        layout.addWidget(self.btn_robot4_rendezvous)
+        layout.addWidget(self.btn_robot4_meet)
         layout.addWidget(self.log_box)
         layout.addWidget(self.btn_exit)
+
         self.setLayout(layout)
 
         self.btn_assign_patient.clicked.connect(self.assign_patient)
         self.btn_notify_arrival.clicked.connect(self.notify_arrival)
         self.btn_go_to_room.clicked.connect(self.go_to_room)
+
+        self.btn_robot4_rendezvous.clicked.connect(self.robot4_rendezvous)
+        self.btn_robot4_object.clicked.connect(lambda:self.robot4_object(self.object_line_edit.text()))
+        self.btn_robot4_meet.clicked.connect(self.robot4_meet)
         self.btn_exit.clicked.connect(self.close)
 
     def log(self, msg):
@@ -149,7 +183,7 @@ class PatrolControlGUI(QWidget):
         else:
             self.log('❌ 도착 통보 처리 실패: ack=False')
 
-        return response  # 형님 요청대로 응답 반환!
+        return response  
 
     def go_to_room(self):
         permission = True
@@ -164,11 +198,53 @@ class PatrolControlGUI(QWidget):
         else:
             self.log('❌ 도착 통보 처리 실패: ack=False')
 
-        return response  # 형님 요청대로 응답 반환!
+        return response 
+    
+    def robot4_object(self,label):
+        self.object_line_edit.setText('')
+        self.log('물건 배달 요청 중...')
+        self.log(f'요청 물건: {label}')
+        req = Firstcmd.Request()
+        req.label = label
+        def callback(success, response):
+            if success and response.success:
+                self.log('✅ 물건 배달 처리 완료 ')
+            else:
+                self.log('물건 배달 처리 실패')
+
+        self.ros_node.call_service(self.ros_node.robot4_object_client, req, callback)
+
+    def robot4_meet(self):
+        self.log('랑데부 포인트 만남 요청 중...')
+        req = EndFlag.Request()
+
+        def callback(success, response):
+            if success and response.success:
+                self.log('✅ 랑데부 포인트 만남처리 완료 ')
+            else:
+                self.log('랑데부 포인트 만남 처리 실패')
+
+        self.ros_node.call_service(self.ros_node.robot4_meet_client, req, callback)
+
+    def robot4_rendezvous(self):
+        data = True
+        self.log(f'🔘 랑데뷰 도착 여부 :  (data={data})')
+        req = EndFlag.Request()
+        req.data = True
+
+        response = self.ros_node.simulate_robot4_rendezvous(data)
+
+        if response.success:
+            self.log('✅ 도착 통보 처리 완료: success=True')
+        else:
+            self.log('❌ 도착 통보 처리 실패: success=False')
+
+        return response  
+
 
 def main():
     rclpy.init()
-    ros_node = PatrolControlNode()
+    ros_node = PatrolControlNode(namespace='/robot1')
 
     class RosSpinThread(QThread):
         def __init__(self, node):

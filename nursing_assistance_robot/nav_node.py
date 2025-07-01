@@ -10,7 +10,7 @@ from tf_transformations import quaternion_from_euler
 from std_msgs.msg import Bool
 from geometry_msgs.msg import Twist
 import time
-from rokey_interfaces.srv import AssignPatient, NotifyArrival, GoToRoom, CheckDetection
+from rokey_interfaces.srv import AssignPatient, NotifyArrival, GoToRoom
 from enum import Enum
 from rokey_interfaces.msg import Aruco_Marker
 import random
@@ -44,7 +44,6 @@ class PatrolNavigator(Node):
         self.get_logger().info(f'assign_patient 서비스 등록 완료: {self.assign_patient_service is not None}')
         self.arrival_client = self.create_client(NotifyArrival, 'notify_arrival')
         self.permission_client = self.create_client(GoToRoom, 'go_to_room')
-        #self.yolo_client = self.create_client(CheckDetection, 'check_detection')
         self.cmd_vel_pub = self.create_publisher(Twist, '/robot1/cmd_vel', 10)
         self.marker_sub = self.create_subscription(Aruco_Marker, '/aruco_marker',self.aruco_callback,10)
 
@@ -96,14 +95,6 @@ class PatrolNavigator(Node):
         self.run()  # 여기서 상태 전이 시작
         return response
     
-    # def check_yolo_detection(self):
-    #     if not self.yolo_client.wait_for_service(timeout_sec=0.5):
-    #         return "none"
-    #     req = CheckDetection.Request()
-    #     future = self.yolo_client.call_async(req)
-    #     rclpy.spin_until_future_complete(self, future)
-    #     return future.result().detection if future.result() else "none"
-
     def init_robot(self):
         initial_pose = self.create_pose(-0.01, -0.01, 0.0)
         self.nav_navigator.setInitialPose(initial_pose)
@@ -142,7 +133,7 @@ class PatrolNavigator(Node):
                 continue
             self.get_logger().info(f'Waypoint {self.current_index + 1} 도달 완료')
 
-            if self.current_index == 0:
+            if self.current_index == 0 :
                 self.task_rendezvous()
             if self.current_index == 1:
                 self.task_room()
