@@ -175,14 +175,11 @@ class PatrolControlGUI(QWidget):
     def notify_arrival(self):
         patient_id = 1
         self.log(f'🔘 도착 통보 버튼 클릭됨 (patient_id={patient_id})')
-
         response = self.ros_node.simulate_notify_arrival(patient_id)
-
         if response.ack:
             self.log('✅ 도착 통보 처리 완료: ack=True')
         else:
             self.log('❌ 도착 통보 처리 실패: ack=False')
-
         return response  
 
     def go_to_room(self):

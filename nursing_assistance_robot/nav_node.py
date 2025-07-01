@@ -10,9 +10,9 @@ from tf_transformations import quaternion_from_euler
 from std_msgs.msg import Bool
 from geometry_msgs.msg import Twist
 import time
-from rokey_interfaces.srv import AssignPatient, NotifyArrival, GoToRoom
+from rokey_interfaces.srv import AssignPatient, NotifyArrival, GoToRoom, CheckDetection
 from enum import Enum
-from rokey_interfaces.msg import Aruco_Marker
+# from rokey_interfaces.msg import Aruco_Marker
 import random
 
 class State(Enum):
@@ -44,8 +44,9 @@ class PatrolNavigator(Node):
         self.get_logger().info(f'assign_patient 서비스 등록 완료: {self.assign_patient_service is not None}')
         self.arrival_client = self.create_client(NotifyArrival, 'notify_arrival')
         self.permission_client = self.create_client(GoToRoom, 'go_to_room')
+        #self.yolo_client = self.create_client(CheckDetection, 'check_detection')
         self.cmd_vel_pub = self.create_publisher(Twist, '/robot1/cmd_vel', 10)
-        self.marker_sub = self.create_subscription(Aruco_Marker, '/aruco_marker',self.aruco_callback,10)
+        # self.marker_sub = self.create_subscription(Aruco_Marker, '/aruco_marker',self.aruco_callback,10)
 
         self.waypoints = [
             self.create_pose(4.09, 0.89, 180.0),
@@ -95,6 +96,14 @@ class PatrolNavigator(Node):
         self.run()  # 여기서 상태 전이 시작
         return response
     
+    # def check_yolo_detection(self):
+    #     if not self.yolo_client.wait_for_service(timeout_sec=0.5):
+    #         return "none"
+    #     req = CheckDetection.Request()
+    #     future = self.yolo_client.call_async(req)
+    #     rclpy.spin_until_future_complete(self, future)
+    #     return future.result().detection if future.result() else "none"
+
     def init_robot(self):
         initial_pose = self.create_pose(-0.01, -0.01, 0.0)
         self.nav_navigator.setInitialPose(initial_pose)
@@ -133,13 +142,12 @@ class PatrolNavigator(Node):
                 continue
             self.get_logger().info(f'Waypoint {self.current_index + 1} 도달 완료')
 
-            if self.current_index == 0 :
+            if self.current_index == 0 and (self.state == State.TO_RENDEZVOUS or self.State.WAIT_PERMISSION):
                 self.task_rendezvous()
-            if self.current_index == 1:
+            if self.current_index == 1 and self.state ==  State.TO_ROOM:
                 self.task_room()
-            if self.current_index == 2:
+            if self.current_index == 2 and self.state == State.TO_DOCK:
                 self.task_dock()
-            self.current_index += 1
 
     def detect(self):
         self.nav_navigator.cancelTask()
@@ -156,18 +164,32 @@ class PatrolNavigator(Node):
         if self.arrival_client.wait_for_service(timeout_sec=1.0):
             req = NotifyArrival.Request()
             req.patient_id = self.patient_id
-            self.arrival_client.call_async(req)
-            self.state = State.WAIT_PERMISSION
+            future = self.arrival_client.call_async(req)
+            future.add_done_callback(self.handle_notify_arrival_response)
         self.get_logger().info("병실 이동 허가 대기 중...")
 
         if self.permission_client.wait_for_service(timeout_sec=1.0):
             req = GoToRoom.Request()
-            req.patient_id = self.patient_id
+            req.permission = True
             future = self.permission_client.call_async(req)
-            rclpy.spin_until_future_complete(self, future)
-            if future.result().permission:
-                self.get_logger().info("허가 수신 → 병실 이동 시작")
-                self.state = State.TO_ROOM
+            future.add_done_callback(self.handle_permission_response)
+
+    def handle_notify_arrival_response(self, future):
+        res = future.result()
+        if res.ack:
+            self.get_logger().info("✅ 허가 수신 → 수락")
+            self.state = State.WAIT_PERMISSION
+        else:
+            self.get_logger().info("✅ 허가 수신 → 거절")
+
+    def handle_permission_response(self,future):
+        res = future.result()
+        if res.accepted:
+            self.get_logger().info("✅ 허가 수신 → 수락")
+            self.state = State.TO_ROOM
+            self.current_index += 1
+        else:
+            self.get_logger().info("✅ 허가 수신 → 거절")
 
     def task_room(self):
         self.nav_navigator.cancelTask()
@@ -179,6 +201,7 @@ class PatrolNavigator(Node):
             self.wait_robot(5.0)
         self.get_logger().info('✅ 회전 완료! nav2 다시 실행')
         self.state = State.TO_DOCK
+        self.current_index += 1
     
     def wait_robot(self,count):
         wait_start = time.time()
@@ -201,6 +224,7 @@ class PatrolNavigator(Node):
         self.state = State.WAIT_ID
 
     def start_audio(self,state):
+        notes = []
         if state == 1:
             notes = [
                 (659, 0.125), (659, 0.125), (0, 0.125), (659, 0.125), (0, 0.125),

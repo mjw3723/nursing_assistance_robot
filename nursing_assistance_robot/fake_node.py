@@ -16,7 +16,7 @@ class PatrolControlNode(Node):
         super().__init__('patrol_control_node',namespace=namespace)
 
         ############ROBOT1##########################
-        self.assign_patient_client = self.create_client(AssignPatient, '/assign_patient')
+        self.assign_patient_client = self.create_client(AssignPatient, 'assign_patient')
         self.notify_arrival_service = self.create_service(
             NotifyArrival,
             'notify_arrival',
