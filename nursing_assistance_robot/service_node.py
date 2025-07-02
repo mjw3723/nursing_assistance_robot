@@ -36,7 +36,7 @@ class PatrolNavigator(Node):
 
         self.topic = "python/mqtt"  #토픽이름은 자유롭게 정하면 됨
         self.client_id = f'python-mqtt-{random.randint(0, 100)}' #세션ID가 자동으로 랜덤 생성되어 관리되므로 그대로 사용해도 됨.
-        
+        self.sub_topic = "robot4/flag"
         
         self.state = State.WAIT_ID
         self.patient_id = None
@@ -58,7 +58,9 @@ class PatrolNavigator(Node):
         # self.marker_sub = self.create_subscription(Aruco_Marker, '/aruco_marker',self.aruco_callback,10)
         self.waypoints = [1,2,3]
         self.create_timer(1.0, self.run) 
-        self.clound = Clound()
+        self.client = self.connect_mqtt()
+        self.client.loop_start()
+        
         self.clound.publish(0.0)
         
 
@@ -66,13 +68,18 @@ class PatrolNavigator(Node):
         def on_connect(client, userdata, flags, rc):
             if rc == 0:
                 print("Connected to MQTT Broker!")
+                client.subscribe(self.sub_topic)
             else:
                 print("Failed to connect, return code %d\n", rc)
+            
+        def on_message(client, userdata, msg):
+            print(f"📩 수신: {msg.payload.decode()} (topic: {msg.topic})")
 
         client = mqtt_client.Client(client_id=self.client_id, protocol=mqtt_client.MQTTv311)
         client.tls_set()
         client.username_pw_set(self.username, self.password)
         client.on_connect = on_connect
+        client.on_message = on_message
         client.connect(self.broker, self.port)
         return client
 
@@ -159,6 +166,7 @@ class PatrolNavigator(Node):
 
     def task_rendezvous(self):
         if self.arrival_client.wait_for_service(timeout_sec=5.0):
+            self.get_logger().info('-- 도착 완료 알림 서비스 실행 --')
             req = NotifyArrival.Request()
             req.patient_id = self.patient_id
             future = self.arrival_client.call_async(req)
@@ -179,13 +187,13 @@ class PatrolNavigator(Node):
 
 
     def task_room(self):
-        self.get_logger().info('❌ nav2 작업 취소됨. 로봇 회전 중...')
-        self.spin_robot(0.3,1.4)
-        self.wait_robot(3.0)
-        for i in range(4):
-            self.spin_robot(-0.3,1.3)
-            self.wait_robot(5.0)
-        self.get_logger().info('✅ 회전 완료! nav2 다시 실행')
+        # self.get_logger().info('❌ nav2 작업 취소됨. 로봇 회전 중...')
+        # self.spin_robot(0.3,1.4)
+        # self.wait_robot(3.0)
+        # for i in range(4):
+        #     self.spin_robot(-0.3,1.3)
+        #     self.wait_robot(5.0)
+        # self.get_logger().info('✅ 회전 완료! nav2 다시 실행')
         self.state = State.TO_DOCK  
     
     def wait_robot(self,count):

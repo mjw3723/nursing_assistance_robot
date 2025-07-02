@@ -56,6 +56,7 @@ class DepthSubscriber(Node):
         self.cx = msg.x
         self.cy = msg.y
         self.get_logger().info('Point Callback !!')
+        
 def main(args=None):
     rclpy.init(args=args)
     node = DepthSubscriber()

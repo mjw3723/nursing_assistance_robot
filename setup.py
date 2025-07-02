@@ -31,6 +31,9 @@ setup(
             'main_controller = nursing_assistance_robot.main_controller:main',
             'fake_patrol_node = nursing_assistance_robot.fake_patrol_node:main',
             'service_node = nursing_assistance_robot.service_node:main',
+            'fake_node2 = nursing_assistance_robot.fake_node2:main',
+            'nav_node2 = nursing_assistance_robot.nav_node2:main',
+            'nav_node3 = nursing_assistance_robot.nav_node3:main',
         ],
     },
 )

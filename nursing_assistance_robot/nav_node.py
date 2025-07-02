@@ -12,7 +12,6 @@ from geometry_msgs.msg import Twist
 import time
 from rokey_interfaces.srv import AssignPatient, NotifyArrival, GoToRoom
 from enum import Enum
-from nursing_assistance_robot.cloud import Clound
 # from rokey_interfaces.msg import Aruco_Marker
 import random
 
@@ -38,7 +37,6 @@ class PatrolNavigator(Node):
         self.create_subscription(Bool, '/person_detected', self.person_callback, 10)
         self.create_subscription(Bool, '/person_cleared', self.clear_callback, 10)
         self.audio_publisher = self.create_publisher(AudioNoteVector, '/robot1/cmd_audio', 10)
-        self.waypoints = []
         self.current_index = 0
         #서비스 설정
         self.get_logger().info('서비스 등록 대기')
@@ -46,18 +44,18 @@ class PatrolNavigator(Node):
         self.get_logger().info(f'assign_patient 서비스 등록 완료: {self.assign_patient_service is not None}')
         self.arrival_client = self.create_client(NotifyArrival, 'notify_arrival')
         self.permission_client = self.create_service(GoToRoom, 'go_to_room',self.go_to_room_cb)
-        #self.yolo_client = self.create_client(CheckDetection, 'check_detection')
         self.cmd_vel_pub = self.create_publisher(Twist, '/robot1/cmd_vel', 10)
-        # self.marker_sub = self.create_subscription(Aruco_Marker, '/aruco_marker',self.aruco_callback,10)
-        self.clound = Clound()
-        self.clound.publish(0.0)
-
+        self.id_detect_sub = self.create_subscription(Bool,'/id_detect',self.id_detect_callback,1)
         self.waypoints = [
             self.create_pose(4.09, 0.89, 180.0),
             self.create_pose(1.06, 0.75, 90.0),
             self.create_pose(0.05, 0.05, 0.0)
-        ]
-        self.create_timer(1.0, self.run) 
+        ] 
+        self.id_detect_state = False
+        self.create_timer(1.0, self.run)
+        
+    def id_detect_callback(self,msg):
+        self.id_detect_state = msg.data
 
     def person_callback(self, msg):
         if msg.data and not self.person_detected:
@@ -116,11 +114,10 @@ class PatrolNavigator(Node):
         if self.dock_navigator.getDockedStatus():
             self.get_logger().info('도킹 상태 → 언도킹')
             self.dock_navigator.undock()
+        self.current_index = 0
+        self.nav_go_pose(0)
         self.state = State.WAIT_PERMISSION
         self.get_logger().info('State = WAIT_PERMISSION')
-        self.nav_go_pose(0)
-        self.clound.publish(0.0)
-        
 
     def destroy_robot(self):
         self.start_audio()
@@ -141,12 +138,11 @@ class PatrolNavigator(Node):
             if feedback:
                 self.get_logger().info(f'남은 거리: {feedback.distance_remaining:.2f}m')
             rclpy.spin_once(self, timeout_sec=0.5)
-        self.get_logger().info(f'Waypoint {position + 1} 도달 완료')
-
-    def detect(self):
-        self.nav_navigator.cancelTask()
+        if not self.person_detected:
+            self.get_logger().info(f'Waypoint {position + 1} 도달 완료')
         
     def run(self):
+        self.get_logger().info(f'🌀 run() 호출됨 - 현재 상태: {self.state}')
         if self.state == State.WAIT_ID:
             return  # 아무것도 안 함
         if self.state == State.TO_RENDEZVOUS:
@@ -156,6 +152,7 @@ class PatrolNavigator(Node):
         elif self.state == State.WAIT_ROOM:
             self.task_waitRoom()
         elif self.state == State.TO_ROOM:
+            self.current_index = 1
             self.nav_go_pose(1)
             self.task_room()
         elif self.state == State.TO_DOCK:
@@ -163,6 +160,7 @@ class PatrolNavigator(Node):
             self.destroy_robot()
 
     def task_rendezvous(self):
+        self.get_logger().info('✅ task_rendezvous() 진입함')
         self.nav_navigator.cancelTask()
         self.get_logger().info('❌ nav2 작업 취소됨. ')
         if self.arrival_client.wait_for_service(timeout_sec=5.0):
@@ -171,6 +169,8 @@ class PatrolNavigator(Node):
             req.patient_id = self.patient_id
             future = self.arrival_client.call_async(req)
             future.add_done_callback(self.handle_notify_arrival_response)
+        else:
+            self.get_logger().warn("❌ notify_arrival 서비스 연결 실패!")
 
     def task_waitRoom(self):
         self.get_logger().info("병실 이동 허가 대기 중...")
@@ -179,7 +179,7 @@ class PatrolNavigator(Node):
         res = future.result()
         if res.ack:
             self.get_logger().info("✅ 허가 수신 → 수락 --- 도착 여부 송신 완료")
-            self.state = State.WAIT_ROOM
+            self.state = State.WAIT_ROOM    
             self.get_logger().info("STATE = WAIT_ROOM")
             self.start_audio()
         else:
@@ -198,20 +198,23 @@ class PatrolNavigator(Node):
         self.get_logger().info('❌ nav2 작업 취소됨. 로봇 회전 중...')
         self.spin_robot(0.3,1.4)
         self.wait_robot(3.0)
-        for i in range(3):
+        for i in range(4):
+            if self.id_detect_state:
+                self.get_logger().info("🎯 외부 ArUco 감지 수신 → 회전 중단")
+                self.wait_robot(18.0)
+                break
             self.spin_robot(-0.3,1.3)
             self.wait_robot(5.0)
         self.get_logger().info('✅ 회전 완료! nav2 다시 실행')
+        self.current_index = 2
+        self.nav_go_pose(2)
         self.state = State.TO_DOCK
         self.get_logger().info("STATE = TO_DOCK")
-        self.nav_go_pose(2)
     
     def wait_robot(self,count):
         wait_start = time.time()
         while time.time() - wait_start < count:
             rclpy.spin_once(self, timeout_sec=0.1)
-
-    
 
     def spin_robot(self,angular,duration):
         twist = Twist()

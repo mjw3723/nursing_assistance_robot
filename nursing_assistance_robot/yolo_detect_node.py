@@ -16,6 +16,8 @@ import pickle
 import os
 from rokey_interfaces.msg import Aruco_Marker
 import subprocess
+import time
+from geometry_msgs.msg import Twist
 RGB_TOPIC = '/robot1/oakd/rgb/preview/image_raw' # RGB 이미지 토픽
 CALIBRATION_FILE_PATH = 'camera_calibration.pkl' # 캘리브레이션 데이터 파일 경로
 MARKER_SIZE = 0.05  # ArUco 마커 크기 (미터 단위, 예: 5cm) - 실제 마커 크기와 정확히 일치해야 합니다!
@@ -62,7 +64,9 @@ class YoloSubscriber(Node):
 
         self.face_trigger_pub = self.create_publisher(Bool, '/face_detection_start', 10)
         self.face_triggered = False
-        
+        self.id_detect_pub = self.create_publisher(Bool,'/id_detect',1)
+        self.aruco_detected_sent = False  # 중복 방지
+
     def init_aruco(self):
         # Aruco
         self.camera_matrix = None
@@ -146,7 +150,14 @@ class YoloSubscriber(Node):
                     if not ret:
                         continue
                     marker_id = int(ids[i][0])  # <-- 마커 ID 가져오기
-                    if marker_id == 2:
+                    if marker_id == 2 and not self.aruco_detected_sent:
+                        self.get_logger().info("✅ ID 2 감지됨 → /aruco_2_detected = True 발행")
+                        msg = Bool()
+                        msg.data = True
+                        self.aruco_detect_pub.publish(msg)
+                        self.aruco_detected_sent = True
+                        
+                    if marker_id == 2 :
                         distance = float(tvec[2])
                         self.get_logger().info(f"🎯 ArUco ID=2 거리: {distance:.2f}m")
                         
@@ -178,6 +189,16 @@ class YoloSubscriber(Node):
 
     def distance_callback(self,msg:Float64):
         self.distance_m = msg.data
+
+    def forward_slightly(self):
+        twist = Twist()
+        twist.linear.x = 0.05  # 아주 천천히
+        start_time = time.time()
+        while time.time() - start_time < 0.5:
+            self.cmd_vel_pub.publish(twist)
+            rclpy.spin_once(self, timeout_sec=0.1)
+        twist.linear.x = 0.0
+        self.cmd_vel_pub.publish(twist)
         
     def trigger_face_detection(self):
         self.get_logger().info("🎯 얼굴 인식 및 심박수 루틴 트리거!")
