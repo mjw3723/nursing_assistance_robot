@@ -22,7 +22,7 @@ class PatrolControlNode(Node):
             'notify_arrival',
             self.handle_notify_arrival
         )
-        self.go_to_room_client = self.create_service(GoToRoom, 'go_to_room',self.handle_go_to_room)
+        self.go_to_room_client = self.create_client(GoToRoom, 'go_to_room')
 
         ############ROBOT4##########################
 
@@ -52,43 +52,11 @@ class PatrolControlNode(Node):
 
     # NotifyArrival 서비스 요청 처리
     def handle_notify_arrival(self, request, response):
-        patient_id = request.patient_id
-        log_msg = f'🚑 [NotifyArrival] 도착 통보 요청 수신 (patient_id={patient_id})'
-        self.get_logger().info(log_msg)
-
-        if self.gui_log_callback:
-            self.gui_log_callback(log_msg)
-            self.gui_log_callback('✅ 도착 통보 응답: ack=True')
-
+        self.patient_id = request.patient_id
+        self.get_logger().info(f"{self.patient_id} 수신됨 → patient_idpatient_idpatient_id")
         response.ack = True
         return response
         
-    # 버튼 클릭 시 사용할 내부 처리 메서드
-    def simulate_notify_arrival(self, patient_id):
-        req = NotifyArrival.Request()
-        req.patient_id = patient_id
-        res = NotifyArrival.Response()
-        return self.handle_notify_arrival(req, res)
-    
-
-    def handle_go_to_room(self,request,response):
-        permission = request.permission
-        log_msg = f'🚑 [permission] 도착 통보 요청 수신 (permission={permission})'
-        self.get_logger().info(log_msg)
-        if self.gui_log_callback:
-            self.gui_log_callback(log_msg)
-            self.gui_log_callback('✅ 도착 통보 응답: accepted=True')
-
-        response.accepted = True
-        return response
-    
-    def simulate_go_to_room(self,permission):
-        req = GoToRoom.Request()
-        req.permission = permission
-        res = GoToRoom.Response()
-        return self.handle_go_to_room(req, res)
-        
-
 
 class PatrolControlGUI(QWidget):
     def __init__(self, ros_node):
@@ -103,22 +71,19 @@ class PatrolControlGUI(QWidget):
         self.log_box.setReadOnly(True)
 
         self.btn_assign_patient = QPushButton('환자 배정 (AssignPatient)', self)
-        self.btn_notify_arrival = QPushButton('도착 통보 (NotifyArrival)', self)
         self.btn_go_to_room = QPushButton('병실 이동 허가 (GoToRoom)', self)
         self.btn_exit = QPushButton('종료', self)
 
         layout = QVBoxLayout()
         layout.addWidget(QLabel('🧠 순찰 로봇 서비스 제어'))
         layout.addWidget(self.btn_assign_patient)
-        layout.addWidget(self.btn_notify_arrival)
         layout.addWidget(self.btn_go_to_room)
         layout.addWidget(self.log_box)
         layout.addWidget(self.btn_exit)
         self.setLayout(layout)
 
         self.btn_assign_patient.clicked.connect(self.assign_patient)
-        self.btn_notify_arrival.clicked.connect(self.notify_arrival)
-        self.btn_go_to_room.clicked.connect(self.go_to_room)
+        self.btn_go_to_room.clicked.connect(self.room)
         self.btn_exit.clicked.connect(self.close)
 
     def log(self, msg):
@@ -138,33 +103,20 @@ class PatrolControlGUI(QWidget):
 
         self.ros_node.call_service(self.ros_node.assign_patient_client, req, callback)
 
-    def notify_arrival(self):
-        patient_id = 1
-        self.log(f'🔘 도착 통보 버튼 클릭됨 (patient_id={patient_id})')
-
-        response = self.ros_node.simulate_notify_arrival(patient_id)
-
-        if response.ack:
-            self.log('✅ 도착 통보 처리 완료: ack=True')
-        else:
-            self.log('❌ 도착 통보 처리 실패: ack=False')
-
-        return response  # 형님 요청대로 응답 반환!
-
-    def go_to_room(self):
-        permission = True
-        self.log(f'🔘 병실 허가 요청 (permission={permission})')
+    def room(self):
+        permission =  True
+        self.log(f'병원 이동 요청 (permission={permission})')
         req = GoToRoom.Request()
-        req.permission = True
+        req.permission = permission
 
-        response = self.ros_node.simulate_go_to_room(permission)
+        def callback(success, response):
+            if success and response.accepted:
+                self.log('✅ 환자 배정 성공!')
+            else:
+                self.log('❌ 환자 배정 실패')
 
-        if response.accepted:
-            self.log('✅ 도착 통보 처리 완료: ack=True')
-        else:
-            self.log('❌ 도착 통보 처리 실패: ack=False')
+        self.ros_node.call_service(self.ros_node.go_to_room_client, req, callback)
 
-        return response  # 형님 요청대로 응답 반환!
 
 def main():
     rclpy.init()
