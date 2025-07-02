@@ -29,3 +29,5 @@ test/*.log
 # ❌ 기타
 .env
 *.egg-info/
+
+nursing_assistance_robot/cloud.py

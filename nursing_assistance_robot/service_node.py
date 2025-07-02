@@ -11,8 +11,12 @@ from paho.mqtt import client as mqtt_client
 import time
 from rokey_interfaces.srv import AssignPatient, NotifyArrival, GoToRoom
 from enum import Enum
+from nursing_assistance_robot.cloud import Clound
 # from rokey_interfaces.msg import Aruco_Marker
 import random
+
+
+
 
 class State(Enum):
     WAIT_ID = 0
@@ -25,6 +29,15 @@ class State(Enum):
 class PatrolNavigator(Node):
     def __init__(self):
         super().__init__('patrol_navigator')
+        self.broker = 'kd2b8171.ala.us-east-1.emqxsl.com'
+        self.port = 8883
+        self.username = 'rokey'
+        self.password = 'rokey1234'
+
+        self.topic = "python/mqtt"  #토픽이름은 자유롭게 정하면 됨
+        self.client_id = f'python-mqtt-{random.randint(0, 100)}' #세션ID가 자동으로 랜덤 생성되어 관리되므로 그대로 사용해도 됨.
+        
+        
         self.state = State.WAIT_ID
         self.patient_id = None
         self.person_detected = False
@@ -45,6 +58,31 @@ class PatrolNavigator(Node):
         # self.marker_sub = self.create_subscription(Aruco_Marker, '/aruco_marker',self.aruco_callback,10)
         self.waypoints = [1,2,3]
         self.create_timer(1.0, self.run) 
+        self.clound = Clound()
+        self.clound.publish(0.0)
+        
+
+    def connect_mqtt(self) -> mqtt_client.Client:
+        def on_connect(client, userdata, flags, rc):
+            if rc == 0:
+                print("Connected to MQTT Broker!")
+            else:
+                print("Failed to connect, return code %d\n", rc)
+
+        client = mqtt_client.Client(client_id=self.client_id, protocol=mqtt_client.MQTTv311)
+        client.tls_set()
+        client.username_pw_set(self.username, self.password)
+        client.on_connect = on_connect
+        client.connect(self.broker, self.port)
+        return client
+
+    def publish(self,client,msg):
+        result = client.publish(self.topic, msg)
+        status = result[0]
+        if status == 0:
+            print(f"Sent `{msg}` to topic `{self.topic}`")
+        else:
+            print(f"Failed to send message to topic {self.topic}")
 
     def person_callback(self, msg):
         if msg.data and not self.person_detected:

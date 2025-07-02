@@ -15,7 +15,7 @@ from rclpy.qos import QoSProfile, ReliabilityPolicy, DurabilityPolicy
 import pickle
 import os
 from rokey_interfaces.msg import Aruco_Marker
-
+import subprocess
 RGB_TOPIC = '/robot1/oakd/rgb/preview/image_raw' # RGB 이미지 토픽
 CALIBRATION_FILE_PATH = 'camera_calibration.pkl' # 캘리브레이션 데이터 파일 경로
 MARKER_SIZE = 0.05  # ArUco 마커 크기 (미터 단위, 예: 5cm) - 실제 마커 크기와 정확히 일치해야 합니다!
@@ -45,6 +45,10 @@ class YoloSubscriber(Node):
             '/depth_point',
             1
         )
+        self.aruco_start = self.create_publisher(
+            
+        )
+        self.detected_marker_id_2 = False  # 2번 마커 트리거 중복 방지용
         self.tf_buffer = tf2_ros.Buffer()
         self.tf_listener = tf2_ros.TransformListener(self.tf_buffer, self)
         self.person_published = False
@@ -55,6 +59,9 @@ class YoloSubscriber(Node):
         self.no_person_frame_count = 0
         self.no_person_frame_threshold = 5 
         self.distance_m = None
+
+        self.face_trigger_pub = self.create_publisher(Bool, '/face_detection_start', 10)
+        self.face_triggered = False
         
     def init_aruco(self):
         # Aruco
@@ -138,6 +145,20 @@ class YoloSubscriber(Node):
                     )
                     if not ret:
                         continue
+                    marker_id = int(ids[i][0])  # <-- 마커 ID 가져오기
+                    if marker_id == 2:
+                        distance = float(tvec[2])
+                        self.get_logger().info(f"🎯 ArUco ID=2 거리: {distance:.2f}m")
+                        
+                        if 0.5 < distance < 1.0:  # 거리가 너무 멀면...
+                            self.forward_slightly()  # 전진 명령
+
+                        elif distance <= 0.5 and not self.face_triggered:
+                            self.get_logger().info("📏 거리 0.5m 이하 → 얼굴 인식 시작 트리거")
+                            msg = Bool()
+                            msg.data = True
+                            self.face_trigger_pub.publish(msg)
+                            self.face_triggered = True
                     # 회전 벡터 → 오일러 변환
                     rot_matrix, _ = cv2.Rodrigues(rvec)
                     try:
@@ -157,6 +178,21 @@ class YoloSubscriber(Node):
 
     def distance_callback(self,msg:Float64):
         self.distance_m = msg.data
+        
+    def trigger_face_detection(self):
+        self.get_logger().info("🎯 얼굴 인식 및 심박수 루틴 트리거!")
+
+        # 토픽 퍼블리시 (선택)
+        msg = Bool()
+        msg.data = True
+        self.face_trigger_pub.publish(msg)
+
+        # 💡 vital_check_node2.py 실행
+        try:
+            subprocess.Popen(["ros2", "run", "rokey_pjt", "vital"])
+            self.get_logger().info("🩺 vital_check_node2 노드 실행됨")
+        except Exception as e:
+            self.get_logger().error(f"실행 실패: {e}")
 
     def publish_person_detect(self):
         msg = Bool()

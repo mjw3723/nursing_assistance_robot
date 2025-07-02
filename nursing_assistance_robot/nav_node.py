@@ -12,6 +12,7 @@ from geometry_msgs.msg import Twist
 import time
 from rokey_interfaces.srv import AssignPatient, NotifyArrival, GoToRoom
 from enum import Enum
+from nursing_assistance_robot.cloud import Clound
 # from rokey_interfaces.msg import Aruco_Marker
 import random
 
@@ -48,6 +49,8 @@ class PatrolNavigator(Node):
         #self.yolo_client = self.create_client(CheckDetection, 'check_detection')
         self.cmd_vel_pub = self.create_publisher(Twist, '/robot1/cmd_vel', 10)
         # self.marker_sub = self.create_subscription(Aruco_Marker, '/aruco_marker',self.aruco_callback,10)
+        self.clound = Clound()
+        self.clound.publish(0.0)
 
         self.waypoints = [
             self.create_pose(4.09, 0.89, 180.0),
@@ -116,6 +119,8 @@ class PatrolNavigator(Node):
         self.state = State.WAIT_PERMISSION
         self.get_logger().info('State = WAIT_PERMISSION')
         self.nav_go_pose(0)
+        self.clound.publish(0.0)
+        
 
     def destroy_robot(self):
         self.start_audio()
@@ -185,7 +190,6 @@ class PatrolNavigator(Node):
         if res.accepted:
             self.get_logger().info("✅ 허가 수신 → 수락")
             self.state = State.TO_ROOM
-            self.current_index += 1
         else:
             self.get_logger().info("✅ 허가 수신 → 거절")
 
@@ -194,7 +198,7 @@ class PatrolNavigator(Node):
         self.get_logger().info('❌ nav2 작업 취소됨. 로봇 회전 중...')
         self.spin_robot(0.3,1.4)
         self.wait_robot(3.0)
-        for i in range(4):
+        for i in range(3):
             self.spin_robot(-0.3,1.3)
             self.wait_robot(5.0)
         self.get_logger().info('✅ 회전 완료! nav2 다시 실행')
