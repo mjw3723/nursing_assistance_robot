@@ -31,3 +31,4 @@ test/*.log
 *.egg-info/
 
 nursing_assistance_robot/cloud.py
+nursing_assistance_robot/cloud_sub.py

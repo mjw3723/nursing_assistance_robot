@@ -6,9 +6,9 @@ import rclpy
 from rclpy.node import Node
 from PyQt5.QtCore import QThread
 from PyQt5.QtWidgets import QApplication, QWidget, QLabel, QPushButton, QVBoxLayout, QTextEdit
-
+from geometry_msgs.msg import PoseWithCovarianceStamped
 from rokey_interfaces.srv import AssignPatient, NotifyArrival, GoToRoom
-
+from std_msgs.msg import String
 
 class PatrolControlNode(Node):
     def __init__(self,namespace=''):
@@ -23,13 +23,46 @@ class PatrolControlNode(Node):
             self.handle_notify_arrival
         )
         self.go_to_room_client = self.create_client(GoToRoom, 'go_to_room')
-
+        self.amcl_x = 0.0
+        self.amcl_y = 0.0
+        self.cloud_pub = self.create_publisher(String, '/mqtt_sub', 10)
+        self.cloud_sub = self.create_subscription(String, '/mqtt_received',self.mqtt_sub_callback ,10)
         ############ROBOT4##########################
 
         self.gui_log_callback = None  # GUI 로그 출력을 위한 콜백
+        self.amcl_subscription = self.create_subscription(
+                PoseWithCovarianceStamped,
+                '/robot1/amcl_pose',
+                self.amcl_listener_callback,
+                10
+        )
+        ##########
+
+    def mqtt_sub_callback(self,msg):
+        self.get_logger().info(f'mqtt sub = {msg.data}')
+        self.room_call()
+
+    def amcl_listener_callback(self,msg):
+        self.amcl_x = msg.pose.pose.position.x
+        self.amcl_y = msg.pose.pose.position.y
+        self.get_logger().info(f"📍 수신된 AMCL 위치: x={self.amcl_x:.2f}, y={self.amcl_y :.2f}")
 
     def register_gui_logger(self, log_func):
         self.gui_log_callback = log_func
+
+    def room_call(self):
+        permission = True
+        self.get_logger().info(f'🏥 병원 이동 요청 (permission={permission})')
+        req = GoToRoom.Request()
+        req.permission = permission
+
+        def callback(success, response):
+            if success and response.accepted:
+                self.get_logger().info('✅ 환자 병실 이동 허가됨!')
+            else:
+                self.get_logger().info('❌ 병실 이동 실패')
+
+        self.call_service(self.go_to_room_client, req, callback)
 
     def call_service(self, client, req, callback):
         def wait_and_call():
@@ -54,6 +87,9 @@ class PatrolControlNode(Node):
     def handle_notify_arrival(self, request, response):
         self.patient_id = request.patient_id
         self.get_logger().info(f"{self.patient_id} 수신됨 → patient_idpatient_idpatient_id")
+        msg = String()
+        msg.data = str(self.amcl_x) + ',' + str(self.amcl_y)
+        self.cloud_pub.publish(msg)
         response.ack = True
         return response
         

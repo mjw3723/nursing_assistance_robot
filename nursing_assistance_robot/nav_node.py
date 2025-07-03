@@ -20,8 +20,10 @@ class State(Enum):
     TO_RENDEZVOUS = 1
     WAIT_PERMISSION = 2
     WAIT_ROOM = 3
-    TO_ROOM = 4
-    TO_DOCK = 5
+    GO_ROOM = 4
+    TO_ROOM = 5
+    GO_DOCK = 6
+    TO_DOCK = 7
 
 class PatrolNavigator(Node):
     def __init__(self):
@@ -46,14 +48,20 @@ class PatrolNavigator(Node):
         self.permission_client = self.create_service(GoToRoom, 'go_to_room',self.go_to_room_cb)
         self.cmd_vel_pub = self.create_publisher(Twist, '/robot1/cmd_vel', 10)
         self.id_detect_sub = self.create_subscription(Bool,'/id_detect',self.id_detect_callback,1)
+        #self.create_pose(4.09, 0.89, 180.0),
         self.waypoints = [
-            self.create_pose(4.09, 0.89, 180.0),
-            self.create_pose(1.06, 0.75, 90.0),
-            self.create_pose(0.05, 0.05, 0.0)
+            self.create_pose(3.98, 0.95, 180.0),
+            self.create_pose(1.06, 0.75, 10.0),
+            self.create_pose(0.05, 0.0, 0.0)
         ] 
         self.id_detect_state = False
-        self.create_timer(1.0, self.run)
-        
+        self.create_timer(0.1, self.run)
+        self.moving = False
+        self.id_time_count = 0
+        self.init_state = False
+        self.detect_rotate_count = 0
+        self.dock_state = False
+
     def id_detect_callback(self,msg):
         self.id_detect_state = msg.data
 
@@ -101,48 +109,60 @@ class PatrolNavigator(Node):
     def go_to_room_cb(self,request,response):
         self.permission = request.permission
         self.get_logger().info(f"{self.permission} 수신됨 → 병실 포인트 이동 준비")
-        self.state = State.TO_ROOM
+        self.state = State.GO_ROOM
         response.accepted = True
         return response
 
     def init_robot(self):
-        initial_pose = self.create_pose(-0.01, -0.01, 0.0)
-        self.nav_navigator.setInitialPose(initial_pose)
-        self.get_logger().info('초기 위치 설정 중...')
-        time.sleep(1.0)
-        self.nav_navigator.waitUntilNav2Active()
-        if self.dock_navigator.getDockedStatus():
-            self.get_logger().info('도킹 상태 → 언도킹')
-            self.dock_navigator.undock()
-        self.current_index = 0
-        self.nav_go_pose(0)
-        self.state = State.WAIT_PERMISSION
-        self.get_logger().info('State = WAIT_PERMISSION')
+        if self.init_state == False:
+            # initial_pose = self.create_pose(-0.01, -0.01, 0.0)
+            # self.nav_navigator.setInitialPose(initial_pose)
+            self.get_logger().info('초기 위치 설정 중...')
+            time.sleep(1.0)
+            self.nav_navigator.waitUntilNav2Active()
+            if self.dock_navigator.getDockedStatus():
+                self.get_logger().info('도킹 상태 → 언도킹')
+                self.dock_navigator.undock()
+            self.init_state = True
+            self.start_audio()
+        self.nav_go_pose(0,State.WAIT_PERMISSION)
 
     def destroy_robot(self):
-        self.start_audio()
-        self.dock_navigator.dock()
-        self.get_logger().info('도킹 요청 완료')
+        if self.dock_state == False:
+            self.start_audio()
+            self.dock_navigator.dock()
+            self.get_logger().info('도킹 요청 완료')
+            self.dock_state = True
+            self.state = State.WAIT_ID
 
-    def nav_go_pose(self,position):
+    def nav_go_pose(self,position,next_state):
         if self.should_resume:
             self.should_resume = False
             self.get_logger().info('사람 사라짐 → 경로 재실행')
-        self.nav_navigator.goToPose(self.waypoints[position])
-        while not self.nav_navigator.isTaskComplete():
-            if self.person_detected:
-                self.get_logger().info('사람 감지! 경로 취소 중...')
-                self.nav_navigator.cancelTask()
-                break
-            feedback = self.nav_navigator.getFeedback()
-            if feedback:
-                self.get_logger().info(f'남은 거리: {feedback.distance_remaining:.2f}m')
-            rclpy.spin_once(self, timeout_sec=0.5)
-        if not self.person_detected:
-            self.get_logger().info(f'Waypoint {position + 1} 도달 완료')
+            self.nav_navigator.goToPose(self.waypoints[self.current_index]) 
+            self.moving = True
+
+        if self.person_detected:
+            self.get_logger().info('사람 감지! 경로 취소 중...')
+            self.nav_navigator.cancelTask()
+            return
+    
+        if not self.nav_navigator.isTaskComplete():
+            return
         
+        if self.moving == False:
+            self.nav_navigator.goToPose(self.waypoints[position]) 
+            self.current_index = position
+            self.moving = True
+            return
+
+        if self.moving == True and self.nav_navigator.isTaskComplete():
+            self.get_logger().info(f'➡️ Waypoint {position}로 이동 완료 STATE 변경')
+            self.state = next_state
+            self.moving = False
+
     def run(self):
-        self.get_logger().info(f'🌀 run() 호출됨 - 현재 상태: {self.state}')
+        self.get_logger().info(f'🌀 run() 호출됨 - 현재 상태: {self.state} 현재 current_index = {self.current_index}')
         if self.state == State.WAIT_ID:
             return  # 아무것도 안 함
         if self.state == State.TO_RENDEZVOUS:
@@ -151,12 +171,13 @@ class PatrolNavigator(Node):
             self.task_rendezvous()
         elif self.state == State.WAIT_ROOM:
             self.task_waitRoom()
+        elif self.state == State.GO_ROOM:
+            self.task_goRoom()
         elif self.state == State.TO_ROOM:
-            self.current_index = 1
-            self.nav_go_pose(1)
             self.task_room()
-        elif self.state == State.TO_DOCK:
+        elif self.state == State.GO_DOCK:
             self.task_dock()
+        elif self.state == State.TO_DOCK:
             self.destroy_robot()
 
     def task_rendezvous(self):
@@ -175,13 +196,15 @@ class PatrolNavigator(Node):
     def task_waitRoom(self):
         self.get_logger().info("병실 이동 허가 대기 중...")
 
+    def task_goRoom(self):
+        self.nav_go_pose(1,State.TO_ROOM)
+
     def handle_notify_arrival_response(self, future):
         res = future.result()
         if res.ack:
             self.get_logger().info("✅ 허가 수신 → 수락 --- 도착 여부 송신 완료")
             self.state = State.WAIT_ROOM    
-            self.get_logger().info("STATE = WAIT_ROOM")
-            self.start_audio()
+            self.get_logger().info("STATE 변경 WAIT_ROOM")
         else:
             self.get_logger().info("✅ 허가 수신 → 거절")
 
@@ -196,41 +219,30 @@ class PatrolNavigator(Node):
     def task_room(self):
         self.nav_navigator.cancelTask()
         self.get_logger().info('❌ nav2 작업 취소됨. 로봇 회전 중...')
-        self.spin_robot(0.3,1.4)
-        self.wait_robot(3.0)
-        for i in range(4):
-            if self.id_detect_state:
-                self.get_logger().info("🎯 외부 ArUco 감지 수신 → 회전 중단")
-                self.wait_robot(18.0)
-                break
-            self.spin_robot(-0.3,1.3)
-            self.wait_robot(5.0)
-        self.get_logger().info('✅ 회전 완료! nav2 다시 실행')
-        self.current_index = 2
-        self.nav_go_pose(2)
-        self.state = State.TO_DOCK
-        self.get_logger().info("STATE = TO_DOCK")
-    
-    def wait_robot(self,count):
-        wait_start = time.time()
-        while time.time() - wait_start < count:
-            rclpy.spin_once(self, timeout_sec=0.1)
-
-    def spin_robot(self,angular,duration):
-        twist = Twist()
-        twist.angular.z = angular
-        start_time = time.time()
-        duration = 1.4 
-        while time.time() - start_time < duration:
+        if not self.id_detect_state:
+            self.detect_rotate_count += 1
+            if self.detect_rotate_count > 20:
+                self.state = State.GO_DOCK
+                return
+            twist = Twist()
+            twist.angular.z = -0.01
             self.cmd_vel_pub.publish(twist)
-            rclpy.spin_once(self, timeout_sec=0.1)
+        if self.id_time_count > 20:
+            self.state = State.GO_DOCK
+            return
+        if self.id_detect_state == True:
+            self.get_logger().info('OOOOOOO 얼굴 인식 됐음')
+            twist = Twist()
+            twist.angular.z = 0.0
+            self.cmd_vel_pub.publish(twist)
+            self.id_time_count += 1
+            return
 
     def task_dock(self):
-        self.start_audio(random.randint(1,6))
-        self.state = State.WAIT_ID
+        self.nav_go_pose(2,State.TO_DOCK)
 
     def start_audio(self):
-        state = random.randint(1,6)
+        state = random.randint(1,5)
         notes = []
         if state == 1:
             notes = [

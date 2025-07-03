@@ -34,6 +34,8 @@ setup(
             'fake_node2 = nursing_assistance_robot.fake_node2:main',
             'nav_node2 = nursing_assistance_robot.nav_node2:main',
             'nav_node3 = nursing_assistance_robot.nav_node3:main',
+            'cloud = nursing_assistance_robot.cloud:main',
+            'cloud_sub = nursing_assistance_robot.cloud_sub:main'
         ],
     },
 )
