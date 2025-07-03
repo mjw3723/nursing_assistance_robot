@@ -1,5 +1,6 @@
 from setuptools import find_packages, setup
-
+import os
+from glob import glob
 package_name = 'nursing_assistance_robot'
 
 setup(
@@ -10,6 +11,9 @@ setup(
         ('share/ament_index/resource_index/packages',
             ['resource/' + package_name]),
         ('share/' + package_name, ['package.xml']),
+        (os.path.join('share', package_name, 'model'), glob('nursing_assistance_robot/model/*.pb')),
+        (os.path.join('share', package_name, 'model'), glob('nursing_assistance_robot/model/*.pbtxt')),
+        (os.path.join('share', package_name, 'launch'), glob('launch/*.launch.py')), 
     ],
     install_requires=['setuptools'],
     zip_safe=True,
@@ -24,7 +28,6 @@ setup(
             'yolo_detect_depth = nursing_assistance_robot.yolo_detect_depth:main',
             'request_node = nursing_assistance_robot.request_node:main',
             'response_node = nursing_assistance_robot.response_node:main',
-            'yolo_detect_node = nursing_assistance_robot.yolo_detect_node:main',
             'depth_node = nursing_assistance_robot.depth_node:main',
             'fake_node = nursing_assistance_robot.fake_node:main',
             'music_node = nursing_assistance_robot.music_node:main',
@@ -35,7 +38,9 @@ setup(
             'nav_node2 = nursing_assistance_robot.nav_node2:main',
             'nav_node3 = nursing_assistance_robot.nav_node3:main',
             'cloud = nursing_assistance_robot.cloud:main',
-            'cloud_sub = nursing_assistance_robot.cloud_sub:main'
+            'cloud_sub = nursing_assistance_robot.cloud_sub:main',
+            'vital = nursing_assistance_robot.vital_check_node2:main',
+            'yolo_detect_node1 = nursing_assistance_robot.yolo_detect_node:main',
         ],
     },
 )

@@ -12,6 +12,7 @@ from geometry_msgs.msg import Twist
 import time
 from rokey_interfaces.srv import AssignPatient, NotifyArrival, GoToRoom
 from enum import Enum
+from std_msgs.msg import String
 # from rokey_interfaces.msg import Aruco_Marker
 import random
 
@@ -48,10 +49,11 @@ class PatrolNavigator(Node):
         self.permission_client = self.create_service(GoToRoom, 'go_to_room',self.go_to_room_cb)
         self.cmd_vel_pub = self.create_publisher(Twist, '/robot1/cmd_vel', 10)
         self.id_detect_sub = self.create_subscription(Bool,'/id_detect',self.id_detect_callback,1)
+        self.state_publisher = self.create_publisher(String,'/position',10)
         #self.create_pose(4.09, 0.89, 180.0),
         self.waypoints = [
-            self.create_pose(3.98, 0.95, 180.0),
-            self.create_pose(1.06, 0.75, 10.0),
+            self.create_pose(4.09, 0.89, 180.0),
+            self.create_pose(1.06, 0.75, 130.0),
             self.create_pose(0.05, 0.0, 0.0)
         ] 
         self.id_detect_state = False
@@ -61,6 +63,7 @@ class PatrolNavigator(Node):
         self.init_state = False
         self.detect_rotate_count = 0
         self.dock_state = False
+        
 
     def id_detect_callback(self,msg):
         self.id_detect_state = msg.data
@@ -109,7 +112,6 @@ class PatrolNavigator(Node):
     def go_to_room_cb(self,request,response):
         self.permission = request.permission
         self.get_logger().info(f"{self.permission} 수신됨 → 병실 포인트 이동 준비")
-        self.state = State.GO_ROOM
         response.accepted = True
         return response
 
@@ -133,7 +135,12 @@ class PatrolNavigator(Node):
             self.dock_navigator.dock()
             self.get_logger().info('도킹 요청 완료')
             self.dock_state = True
-            self.state = State.WAIT_ID
+            #self.state = State.WAIT_ID
+
+    def send_state_message(self,text):
+        msg = String()
+        msg.data = text
+        self.state_publisher.publish(msg)
 
     def nav_go_pose(self,position,next_state):
         if self.should_resume:
@@ -202,6 +209,7 @@ class PatrolNavigator(Node):
     def handle_notify_arrival_response(self, future):
         res = future.result()
         if res.ack:
+            self.start_audio()
             self.get_logger().info("✅ 허가 수신 → 수락 --- 도착 여부 송신 완료")
             self.state = State.WAIT_ROOM    
             self.get_logger().info("STATE 변경 WAIT_ROOM")
@@ -221,17 +229,17 @@ class PatrolNavigator(Node):
         self.get_logger().info('❌ nav2 작업 취소됨. 로봇 회전 중...')
         if not self.id_detect_state:
             self.detect_rotate_count += 1
-            if self.detect_rotate_count > 20:
+            if self.detect_rotate_count > 60:
                 self.state = State.GO_DOCK
                 return
             twist = Twist()
             twist.angular.z = -0.01
             self.cmd_vel_pub.publish(twist)
-        if self.id_time_count > 20:
+        if self.id_time_count > 60:
             self.state = State.GO_DOCK
             return
         if self.id_detect_state == True:
-            self.get_logger().info('OOOOOOO 얼굴 인식 됐음')
+            self.get_logger().info('----------얼굴 인식 됐음---------------')
             twist = Twist()
             twist.angular.z = 0.0
             self.cmd_vel_pub.publish(twist)
