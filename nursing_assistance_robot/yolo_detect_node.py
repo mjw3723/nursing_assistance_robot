@@ -25,14 +25,14 @@ import time  # ← 이 줄을 꼭 추가하세요
 #################아르코마커########################################아르코마커###################################################아르코마커########################################아르코마커##########
 ###############아르코마커#########################아르코마커#######################아르코마커########################아르코마커#########################아르코마커#####################################
 #################아르코마커########################################아르코마커###################################################아르코마커########################################아르코마커##########
-RGB_TOPIC = '/robot1/oakd/rgb/preview/image_raw'
+RGB_TOPIC ='/robot1/oakd/rgb/preview/image_raw'
 CALIBRATION_FILE_PATH = 'camera_calibration.pkl' # 캘리브레이션 데이터 파일 경로
 MARKER_SIZE = 0.05  # ArUco 마커 크기 (미터 단위, 예: 5cm) - 실제 마커 크기와 정확히 일치해야 합니다!
 class YoloSubscriber(Node):
     def __init__(self):
         super().__init__('yolo_subscriber')
         self.bridge = CvBridge()
-        self.model = YOLO('/home/moon/turtlebot4_ws/src/yolov8_ros/yolov8_ros/best.pt',verbose=False)
+        self.model = YOLO('/home/rokey/rokey_ws/src/rokey_pjt/rokey_pjt/best.pt',verbose=False)
         self.init_aruco()
         qos_profile = QoSProfile(
             reliability=ReliabilityPolicy.RELIABLE,
@@ -70,9 +70,10 @@ class YoloSubscriber(Node):
         self.face_trigger_pub = self.create_publisher(Bool, '/face_detection_start', 10)
         self.face_triggered = False
 
+       
 
     def init_aruco(self):
-        # Aruco/home/moon/nursing_assistance_robot
+        # Aruco
         self.camera_matrix = None
         self.dist_coeffs = None
         try:
@@ -104,97 +105,91 @@ class YoloSubscriber(Node):
 
     
     def listener_callback(self, msg):
-        try:
-            self.get_logger().info(f"YOLO 시작중")
-            person_detected_now = False
-            # ROS 이미지 → OpenCV 이미지
-            cv_image = self.bridge.imgmsg_to_cv2(msg, desired_encoding='bgr8')
-            self.frame_processed = cv_image.copy()
-            # YOLO 추론
-            results = self.model(cv_image, imgsz=320, conf=0.7)[0]
-            annotated_frame = results.plot()  # 결과 시각화
-            if results.boxes is not None and results.boxes.xyxy is not None:
-                for box, cls_id in zip(results.boxes.xyxy.cpu().numpy(), results.boxes.cls.cpu().numpy()):
-                    class_name = self.model.names[int(cls_id)]
-                    if class_name != 'wheelchair' and class_name != 'patient':
-                        continue
-                    self.get_logger().info(f"class Name = ===== {class_name}")
-                    x1, y1, x2, y2 = box[:4]
-                    cx = int((x1 + x2) / 2)
-                    cy = int((y1 + y2) / 2)
-                    self.publish_point(cx,cy)
-                    if self.distance_m is not None:
-                        if self.distance_m <= 3.0:
-                            person_detected_now = True
-                            if not self.person_published:
-                                self.publish_person_detect()
-                        else:
-                            person_detected_now = False
-            self.aruco_run()
-            if person_detected_now:
-                self.no_person_frame_count = 0  # 감지됐으면 초기화
-            else:
-                if self.person_published:  # 사람이 이전에 감지된 상태일 때만 체크
-                    self.no_person_frame_count += 1
-                    if self.no_person_frame_count >= self.no_person_frame_threshold:
-                        if not self.person_cleared_published:
-                            self.publish_person_cleared()
-                            self.person_cleared_published = True
-                        self.no_person_frame_count = 0  # 초기화
-        except Exception as e:
-            self.get_logger().warn(f'{e}')
-            pass
+        self.get_logger().info(f"YOLO 시작중")
+        person_detected_now = False
+        # ROS 이미지 → OpenCV 이미지
+        cv_image = self.bridge.imgmsg_to_cv2(msg, desired_encoding='bgr8')
+        self.frame_processed = cv_image.copy()
+        # YOLO 추론
+        results = self.model(cv_image, imgsz=320, conf=0.7)[0]
+        annotated_frame = results.plot()  # 결과 시각화
+        if results.boxes is not None and results.boxes.xyxy is not None:
+            for box, cls_id in zip(results.boxes.xyxy.cpu().numpy(), results.boxes.cls.cpu().numpy()):
+                class_name = self.model.names[int(cls_id)]
+                if class_name != 'wheelchair' and class_name != 'patient':
+                    continue
+                self.get_logger().info(f"class Name = ===== {class_name}")
+                x1, y1, x2, y2 = box[:4]
+                cx = int((x1 + x2) / 2)
+                cy = int((y1 + y2) / 2)
+                self.publish_point(cx,cy)
+                if self.distance_m is not None:
+                    if self.distance_m <= 3.0:
+                        person_detected_now = True
+                        if not self.person_published:
+                            self.publish_person_detect()
+                    else:
+                        person_detected_now = False
+        self.aruco_run()
+        if person_detected_now:
+            self.no_person_frame_count = 0  # 감지됐으면 초기화
+        else:
+            if self.person_published:  # 사람이 이전에 감지된 상태일 때만 체크
+                self.no_person_frame_count += 1
+                if self.no_person_frame_count >= self.no_person_frame_threshold:
+                    if not self.person_cleared_published:
+                        self.publish_person_cleared()
+                        self.person_cleared_published = True
+                    self.no_person_frame_count = 0  # 초기화
         cv2.imshow("YOLOv8 Detection", annotated_frame)
         cv2.waitKey(1)
     
     def aruco_run(self):
-        try:
-            if self.frame_processed is not None:
-                frame_undistorted = cv2.undistort(self.frame_processed, self.camera_matrix, self.dist_coeffs)
-                corners, ids, _ = self.detector.detectMarkers(frame_undistorted)
-                if ids is not None:
-                    for i in range(len(ids)):
-                        ret, rvec, tvec = cv2.solvePnP(
-                            self.obj_points, corners[i],
-                            self.camera_matrix, self.dist_coeffs
-                        )
-                        if not ret:
-                            continue
-                        marker_id = int(ids[i][0])  # <-- 마커 ID 가져오기
+        if self.frame_processed is not None:
+            frame_undistorted = cv2.undistort(self.frame_processed, self.camera_matrix, self.dist_coeffs)
+            corners, ids, _ = self.detector.detectMarkers(frame_undistorted)
+            if ids is not None:
+                for i in range(len(ids)):
+                    ret, rvec, tvec = cv2.solvePnP(
+                        self.obj_points, corners[i],
+                        self.camera_matrix, self.dist_coeffs
+                    )
+                    if not ret:
+                        continue
 
-                        # ✅ ✅ ✅ 여기 추가! ID=2이고 거리 1m 이내일 때만 트리거 실행
-                        if marker_id == 2:
-                            distance = float(tvec[2])
-                            self.get_logger().info(f"🎯 ArUco ID=2 거리: {distance:.2f}m")
+                    marker_id = int(ids[i][0])
 
-                            if distance > 1.0:
-                                self.forward_slightly()
-                            elif not self.face_triggered:
-                                self.get_logger().info(f"📏 얼굴 인식 시작 (거리={distance:.2f}m)")
-                                self.trigger_face_detection()
-                                self.face_triggered = True
+                    if marker_id == 2:
+                        distance = float(tvec[2])
+                        self.get_logger().info(f"🎯 ArUco ID=2 거리: {distance:.2f}m")
 
+                        # ✅ 1m 기준으로 변경하고, 1m 이상이면 반복적으로 전진
+                        if distance > 1.0:
+                            self.get_logger().info("➡️ 거리 1m 이상 → 전진 중...")
+                            self.forward_slightly()
+                            self.face_triggered = False  # 계속 초기화하여 반복 가능하게 함
+                        elif distance <= 1.0 and not self.face_triggered:
+                            self.get_logger().info(f"📏 얼굴 인식 시작 (거리={distance:.2f}m)")
+                            self.trigger_face_detection()
+                            self.face_triggered = True
 
-                        # 회전 벡터 → 오일러 변환
-                        rot_matrix, _ = cv2.Rodrigues(rvec)
-                        try:
-                            euler_angles = cv2.RQDecomp3x3(rot_matrix)[0]
-                        except cv2.error:
-                            self.get_logger().warn(f"ArUco: Rotation 실패 - ID {ids[i][0]}")
-                            continue
-                        marker_msg = ArucoMarker()
-                        marker_msg.id = int(ids[i][0])
-                        marker_msg.pos_x = float(tvec[0])
-                        marker_msg.pos_y = float(tvec[1])
-                        marker_msg.pos_z = float(tvec[2])
-                        marker_msg.rot_x = float(euler_angles[0])
-                        marker_msg.rot_y = float(euler_angles[1])
-                        marker_msg.rot_z = float(euler_angles[2])
-                        self.marker_pub.publish(marker_msg)
-        except Exception as e:
-            self.get_logger().warn(f'{e}')
-            pass
-    
+                    # 마커 메시지 퍼블리시
+                    rot_matrix, _ = cv2.Rodrigues(rvec)
+                    try:
+                        euler_angles = cv2.RQDecomp3x3(rot_matrix)[0]
+                    except cv2.error:
+                        self.get_logger().warn(f"ArUco: Rotation 실패 - ID {ids[i][0]}")
+                        continue
+                    marker_msg = ArucoMarker()
+                    marker_msg.id = int(ids[i][0])
+                    marker_msg.pos_x = float(tvec[0])
+                    marker_msg.pos_y = float(tvec[1])
+                    marker_msg.pos_z = float(tvec[2])
+                    marker_msg.rot_x = float(euler_angles[0])
+                    marker_msg.rot_y = float(euler_angles[1])
+                    marker_msg.rot_z = float(euler_angles[2])
+                    self.marker_pub.publish(marker_msg)
+        
     def distance_callback(self,msg:Float64):
         self.distance_m = msg.data
     def trigger_face_detection(self):
@@ -206,18 +201,15 @@ class YoloSubscriber(Node):
 
     def forward_slightly(self):
         twist = Twist()
-        twist.linear.x = 0.05  # 아주 천천히
+        twist.linear.x = 0.07  # 아주 천천히
         start_time = time.time()
-        while time.time() - start_time < 0.5:
+        while time.time() - start_time < 5:
             self.cmd_vel_pub.publish(twist)
             rclpy.spin_once(self, timeout_sec=0.1)
         twist.linear.x = 0.0
         self.cmd_vel_pub.publish(twist)
 
-        # 토픽 퍼블리시 (선택)
-        msg = Bool()
-        msg.data = True
-        self.face_trigger_pub.publish(msg)
+    
 
         # 💡 vital_check_node2.py 실행
         try:
@@ -225,12 +217,11 @@ class YoloSubscriber(Node):
             subprocess.Popen([
                 'bash', '-c',
                 'source /opt/ros/humble/setup.bash && '
-                'source ~/nursing_assistance_robot/install/setup.bash && '
-                'ros2 run nursing_assistance_robot vital'
+                'source ~/nursing_assistance/install/setup.bash && '
+                'ros2 run nursing_assistance vital'
             ])
             print("🩺 vital_check_node2 실행됨")
         except Exception as e:
-            self.get_logger().warn(f'{e}')
             print(f"❌ vital_check_node2 실행 실패: {e}")
 
     def publish_person_detect(self):
@@ -296,7 +287,7 @@ class YoloSubscriber(Node):
                 timeout=rclpy.duration.Duration(seconds=1.0) # 변환 대기 시간
             )
             self.get_logger().info(f"ArUco 원본 ({aruco_point_camera.point.x:.2f},{aruco_point_camera.point.y:.2f},{aruco_point_camera.point.z:.2f}) "
-                                f"를 Map으로 변환: ({point_map.point.x:.2f}, {point_map.point.y:.2f}, {point_map.point.z:.2f})")
+                                   f"를 Map으로 변환: ({point_map.point.x:.2f}, {point_map.point.y:.2f}, {point_map.point.z:.2f})")
             return point_map.point.x # 변환된 점의 x 좌표만 반환
 
         except tf2_ros.TransformException as ex:
