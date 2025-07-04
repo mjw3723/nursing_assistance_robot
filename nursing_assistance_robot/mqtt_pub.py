@@ -33,7 +33,7 @@ def publish_loop(client):
     count = 1
     try:
         while True:
-            msg = f"🔥 메시지 번호 {count}"
+            msg = f"True"
             result = client.publish(topic, msg)
             status = result[0]
             if status == 0:
@@ -41,7 +41,7 @@ def publish_loop(client):
             else:
                 print(f"❌ 발행 실패: `{msg}`")
             count += 1
-            time.sleep(1)
+            time.sleep(20)
     except KeyboardInterrupt:
         print("\n⛔️ 사용자 중단 → 퍼블리셔 종료")
 

@@ -135,6 +135,7 @@ class PatrolNavigator(Node):
             self.dock_navigator.dock()
             self.get_logger().info('도킹 요청 완료')
             self.dock_state = True
+            self.send_state_message('대기중 ..')
             #self.state = State.WAIT_ID
 
     def send_state_message(self,text):
@@ -213,6 +214,7 @@ class PatrolNavigator(Node):
             self.get_logger().info("✅ 허가 수신 → 수락 --- 도착 여부 송신 완료")
             self.state = State.WAIT_ROOM    
             self.get_logger().info("STATE 변경 WAIT_ROOM")
+            self.send_state_message('조제실')
         else:
             self.get_logger().info("✅ 허가 수신 → 거절")
 
@@ -221,6 +223,7 @@ class PatrolNavigator(Node):
         if res.accepted:
             self.get_logger().info("✅ 허가 수신 → 수락")
             self.state = State.TO_ROOM
+            self.send_state_message('병동')
         else:
             self.get_logger().info("✅ 허가 수신 → 거절")
 

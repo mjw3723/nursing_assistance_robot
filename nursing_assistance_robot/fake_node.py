@@ -160,6 +160,8 @@ class PatrolControlNode(Node):
     def handle_notify_arrival(self, request, response):
         self.patient_id = request.patient_id
         self.get_logger().info(f"{self.patient_id} 수신됨 → patient_idpatient_idpatient_id")
+        self.gui_log_callback('병동 이동 허가 대기중 ..')
+        
         msg = String()
         msg.data = str(self.amcl_x) + ',' + str(self.amcl_y)
         self.cloud_pub.publish(msg)
